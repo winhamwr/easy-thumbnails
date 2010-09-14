@@ -2,12 +2,15 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.template import Template, Context, TemplateSyntaxError
 from easy_thumbnails.tests.utils import BaseTest, TemporaryStorage
+import os.path, urllib2, shutil
+from tempfile import NamedTemporaryFile
 try:
     from PIL import Image
 except ImportError:
     import Image
 from StringIO import StringIO
 from easy_thumbnails.files import get_thumbnailer
+from easy_thumbnails import utils
 
 
 class ThumbnailTagTest(BaseTest):
@@ -16,7 +19,8 @@ class ThumbnailTagTest(BaseTest):
 
     def setUp(self):
         BaseTest.setUp(self)
-        self.storage = TemporaryStorage()
+        from backends.s3boto import S3BotoStorage
+        self.storage = S3BotoStorage()
         # Save a test image.
         data = StringIO()
         Image.new('RGB', (800, 600)).save(data, 'JPEG')
@@ -25,7 +29,7 @@ class ThumbnailTagTest(BaseTest):
         self.storage.save(self.RELATIVE_PIC_NAME, image_file)
 
     def tearDown(self):
-        self.storage.delete_temporary_storage()
+        #self.storage.delete_temporary_storage()
         BaseTest.tearDown(self)
 
     def render_template(self, source):
@@ -44,11 +48,20 @@ class ThumbnailTagTest(BaseTest):
 
     def verify_thumbnail(self, expected_size, expected_filename):
         # Verify that the thumbnail file exists
-        self.assert_(self.storage.exists(expected_filename),
-                     'Thumbnail file %r not found' % expected_filename)
-
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+        full_name = os.path.join(thumbnail_subdir, expected_filename)
+        self.assert_(
+            self.storage.exists(full_name),
+            'Thumbnail file %r not found' % expected_filename)
         # Verify the thumbnail has the expected dimensions
-        image = Image.open(self.storage.open(expected_filename))
+        if utils.is_storage_local(self.storage):
+            image_f = self.storage.open(full_name)
+        else:
+            image_f = StringIO()
+            remote_image_f = urllib2.urlopen(self.storage.url(full_name))
+            image_f.write(remote_image_f.read())
+            image_f.seek(0)
+        image = Image.open(image_f)
         self.assertEqual(image.size, expected_size)
 
     def testTagInvalid(self):
@@ -138,8 +151,11 @@ class ThumbnailTagTest(BaseTest):
             '{% thumbnail source 240x240 %}"')
         expected = '%s.240x240_q85.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((240, 180), expected)
-        expected_url = ''.join((settings.MEDIA_URL, expected))
-        self.assertEqual(output, 'src="%s"' % expected_url)
+        if utils.is_storage_local(self.storage):
+            expected_url = ''.join((settings.MEDIA_URL, expected))
+            self.assertEqual(output, 'src="%s"' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
 
         # Size from context variable
         # as a tuple:
@@ -147,15 +163,22 @@ class ThumbnailTagTest(BaseTest):
             '{% thumbnail source size %}"')
         expected = '%s.90x100_q85.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((90, 67), expected)
-        expected_url = ''.join((settings.MEDIA_URL, expected))
-        self.assertEqual(output, 'src="%s"' % expected_url)
+        if utils.is_storage_local(self.storage):
+            expected_url = ''.join((settings.MEDIA_URL, expected))
+            self.assertEqual(output, 'src="%s"' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
+
         # as a string:
         output = self.render_template('src="'
             '{% thumbnail source strsize %}"')
         expected = '%s.80x90_q85.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((80, 60), expected)
-        expected_url = ''.join((settings.MEDIA_URL, expected))
-        self.assertEqual(output, 'src="%s"' % expected_url)
+        if utils.is_storage_local(self.storage):
+            expected_url = ''.join((settings.MEDIA_URL, expected))
+            self.assertEqual(output, 'src="%s"' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
 
         # On context
         output = self.render_template('height:'
@@ -168,12 +191,20 @@ class ThumbnailTagTest(BaseTest):
         # Note that the opts are sorted to ensure a consistent filename.
         expected = '%s.240x240_q95_crop_sharpen.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((240, 240), expected)
-        expected_url = ''.join((settings.MEDIA_URL, expected))
-        self.assertEqual(output, 'src="%s"' % expected_url)
+        if utils.is_storage_local(self.storage):
+            expected_url = ''.join((settings.MEDIA_URL, expected))
+            self.assertEqual(output, 'src="%s"' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
 
         # With option and quality on context (also using its unicode method to
         # display the url)
         output = self.render_template(
             '{% thumbnail source 240x240 sharpen crop quality=95 as thumb %}'
             'width:{{ thumb.width }}, url:{{ thumb.url }}')
-        self.assertEqual(output, 'width:240, url:%s' % expected_url)
+        if utils.is_storage_local(self.storage):
+            expected_url = ''.join((settings.MEDIA_URL, expected))
+            self.assertEqual(output, 'width:240, url:%s' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
+            self.assertTrue(output.find('width:240') != -1)

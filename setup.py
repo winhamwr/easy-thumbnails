@@ -32,7 +32,6 @@ setup(
         'easy_thumbnails',
         'easy_thumbnails.management',
         'easy_thumbnails.management.commands',
-        'easy_thumbnails.migrations',
         'easy_thumbnails.templatetags',
         'easy_thumbnails.tests',
     ],

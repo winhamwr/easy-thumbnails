@@ -234,10 +234,8 @@ class Thumbnailer(File):
         """
         if not utils.is_storage_local(self.source_storage):
             # Get a local copy of the source file
-            tmp_image_f = StringIO()
             orig_f = urllib2.urlopen(self.source_storage.url(self.name))
-            tmp_image_f.write(orig_f.read())
-            tmp_image_f.seek(0)
+            tmp_image_f = ContentFile(orig_f.read())
             self.file = tmp_image_f
 
         image = engine.generate_source_image(self, thumbnail_options)

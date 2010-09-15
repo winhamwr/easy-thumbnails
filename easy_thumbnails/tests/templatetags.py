@@ -1,35 +1,58 @@
-from django.conf import settings
-from django.core.files.base import ContentFile
-from django.template import Template, Context, TemplateSyntaxError
-from easy_thumbnails.tests.utils import BaseTest, TemporaryStorage
+from __future__ import with_statement
+
 import os.path, urllib2, shutil
-from tempfile import NamedTemporaryFile
 try:
     from PIL import Image
 except ImportError:
     import Image
 from StringIO import StringIO
+
+from django.conf import settings
+from django.core.files.base import ContentFile
+from django.template import Template, Context, TemplateSyntaxError
+
+from easy_thumbnails.tests.utils import (
+    BaseTest,
+    TemporaryStorage,
+    FakeRemoteStorage,
+)
 from easy_thumbnails.files import get_thumbnailer
 from easy_thumbnails import utils
 
+ET_FIXTURES_DIR = os.path.join(
+    os.path.abspath(
+        os.path.dirname(__file__)),
+    '..',
+    'fixtures')
+TRANS_PNG = 'gmail_trans.png'
+OPAQUE_PNG = 'gmail.png'
 
-class ThumbnailTagTest(BaseTest):
+class BlankThumbnailTest(BaseTest):
     RELATIVE_PIC_NAME = 'test.jpg'
+    STORAGE_BACKEND = TemporaryStorage
     restore_settings = ['THUMBNAIL_DEBUG']
 
-    def setUp(self):
-        BaseTest.setUp(self)
-        from backends.s3boto import S3BotoStorage
-        self.storage = S3BotoStorage()
+    def _create_test_image(self):
         # Save a test image.
         data = StringIO()
         Image.new('RGB', (800, 600)).save(data, 'JPEG')
         data.seek(0)
         image_file = ContentFile(data.read())
+
+        return image_file
+
+    def _cleanup_storage(self):
+        self.storage.delete_temporary_storage()
+
+    def setUp(self):
+        BaseTest.setUp(self)
+        self.storage = self.STORAGE_BACKEND()
+
+        image_file = self._create_test_image()
         self.storage.save(self.RELATIVE_PIC_NAME, image_file)
 
     def tearDown(self):
-        #self.storage.delete_temporary_storage()
+        self._cleanup_storage()
         BaseTest.tearDown(self)
 
     def render_template(self, source):
@@ -54,13 +77,7 @@ class ThumbnailTagTest(BaseTest):
             self.storage.exists(full_name),
             'Thumbnail file %r not found' % expected_filename)
         # Verify the thumbnail has the expected dimensions
-        if utils.is_storage_local(self.storage):
-            image_f = self.storage.open(full_name)
-        else:
-            image_f = StringIO()
-            remote_image_f = urllib2.urlopen(self.storage.url(full_name))
-            image_f.write(remote_image_f.read())
-            image_f.seek(0)
+        image_f = self.storage.open(full_name)
         image = Image.open(image_f)
         self.assertEqual(image.size, expected_size)
 
@@ -145,6 +162,7 @@ class ThumbnailTagTest(BaseTest):
     def testTag(self):
         # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
         settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
 
         # Basic
         output = self.render_template('src="'
@@ -152,7 +170,8 @@ class ThumbnailTagTest(BaseTest):
         expected = '%s.240x240_q85.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((240, 180), expected)
         if utils.is_storage_local(self.storage):
-            expected_url = ''.join((settings.MEDIA_URL, expected))
+            expected_url = ''.join(
+                (settings.MEDIA_URL, thumbnail_subdir, expected))
             self.assertEqual(output, 'src="%s"' % expected_url)
         else:
             self.assertTrue(output.find(expected) != -1)
@@ -164,7 +183,8 @@ class ThumbnailTagTest(BaseTest):
         expected = '%s.90x100_q85.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((90, 67), expected)
         if utils.is_storage_local(self.storage):
-            expected_url = ''.join((settings.MEDIA_URL, expected))
+            expected_url = ''.join(
+                (settings.MEDIA_URL, thumbnail_subdir, expected))
             self.assertEqual(output, 'src="%s"' % expected_url)
         else:
             self.assertTrue(output.find(expected) != -1)
@@ -175,7 +195,8 @@ class ThumbnailTagTest(BaseTest):
         expected = '%s.80x90_q85.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((80, 60), expected)
         if utils.is_storage_local(self.storage):
-            expected_url = ''.join((settings.MEDIA_URL, expected))
+            expected_url = ''.join(
+                (settings.MEDIA_URL, thumbnail_subdir, expected))
             self.assertEqual(output, 'src="%s"' % expected_url)
         else:
             self.assertTrue(output.find(expected) != -1)
@@ -192,7 +213,8 @@ class ThumbnailTagTest(BaseTest):
         expected = '%s.240x240_q95_crop_sharpen.jpg' % self.RELATIVE_PIC_NAME
         self.verify_thumbnail((240, 240), expected)
         if utils.is_storage_local(self.storage):
-            expected_url = ''.join((settings.MEDIA_URL, expected))
+            expected_url = ''.join(
+                (settings.MEDIA_URL, thumbnail_subdir, expected))
             self.assertEqual(output, 'src="%s"' % expected_url)
         else:
             self.assertTrue(output.find(expected) != -1)
@@ -203,8 +225,128 @@ class ThumbnailTagTest(BaseTest):
             '{% thumbnail source 240x240 sharpen crop quality=95 as thumb %}'
             'width:{{ thumb.width }}, url:{{ thumb.url }}')
         if utils.is_storage_local(self.storage):
-            expected_url = ''.join((settings.MEDIA_URL, expected))
+            expected_url = ''.join(
+                (settings.MEDIA_URL, thumbnail_subdir, expected))
             self.assertEqual(output, 'width:240, url:%s' % expected_url)
         else:
             self.assertTrue(output.find(expected) != -1)
             self.assertTrue(output.find('width:240') != -1)
+
+
+class BlankRemoteThumbnailTest(BlankThumbnailTest):
+    RELATIVE_PIC_NAME = 'test.jpg'
+    STORAGE_BACKEND = FakeRemoteStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+
+class BlankS3ThumbnailTest(BlankThumbnailTest):
+    from storages.backends.s3boto import S3BotoStorage
+
+    RELATIVE_PIC_NAME = 'test.jpg'
+    STORAGE_BACKEND = S3BotoStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _cleanup_storage(self):
+        pass
+
+
+class TransparentPngThumbnailTest(BlankThumbnailTest):
+    RELATIVE_PIC_NAME = 'test.png'
+    STORAGE_BACKEND = TemporaryStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _create_test_image(self):
+        # Save a test transparent png
+        img_path = os.path.join(ET_FIXTURES_DIR, TRANS_PNG)
+        with open(img_path, 'rb') as img_f:
+            data = img_f.read()
+        image_f = ContentFile(data)
+
+        return image_f
+
+
+class TransparentPngRemoteThumbnailTest(BlankThumbnailTest):
+    RELATIVE_PIC_NAME = 'test.png'
+    STORAGE_BACKEND = FakeRemoteStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _create_test_image(self):
+        # Save a test transparent png
+        img_path = os.path.join(ET_FIXTURES_DIR, TRANS_PNG)
+        with open(img_path, 'rb') as img_f:
+            data = img_f.read()
+        image_f = ContentFile(data)
+
+        return image_f
+
+
+class TransparentPngS3ThumbnailTest(BlankThumbnailTest):
+    from storages.backends.s3boto import S3BotoStorage
+
+    RELATIVE_PIC_NAME = 'test.png'
+    STORAGE_BACKEND = S3BotoStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _create_test_image(self):
+        # Save a test transparent png
+        img_path = os.path.join(ET_FIXTURES_DIR, TRANS_PNG)
+        with open(img_path, 'rb') as img_f:
+            data = img_f.read()
+        image_f = ContentFile(data)
+
+        return image_f
+
+    def _cleanup_storage(self):
+        pass
+
+
+class OpaquePngThumbnailTest(BlankThumbnailTest):
+    RELATIVE_PIC_NAME = 'test.png'
+    STORAGE_BACKEND = TemporaryStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _create_test_image(self):
+        # Save a test transparent png
+        img_path = os.path.join(ET_FIXTURES_DIR, OPAQUE_PNG)
+        with open(img_path, 'rb') as img_f:
+            data = img_f.read()
+        image_f = ContentFile(data)
+
+        return image_f
+
+
+class OpaquePngRemoteThumbnailTest(BlankThumbnailTest):
+    RELATIVE_PIC_NAME = 'test.png'
+    STORAGE_BACKEND = FakeRemoteStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _create_test_image(self):
+        # Save a test transparent png
+        img_path = os.path.join(ET_FIXTURES_DIR, OPAQUE_PNG)
+        with open(img_path, 'rb') as img_f:
+            data = img_f.read()
+        image_f = ContentFile(data)
+
+        return image_f
+
+
+class OpaquePngS3ThumbnailTest(BlankThumbnailTest):
+    from storages.backends.s3boto import S3BotoStorage
+
+    RELATIVE_PIC_NAME = 'test.png'
+    STORAGE_BACKEND = S3BotoStorage
+    restore_settings = ['THUMBNAIL_DEBUG']
+
+    def _create_test_image(self):
+        # Save a test transparent png
+        img_path = os.path.join(ET_FIXTURES_DIR, OPAQUE_PNG)
+        with open(img_path, 'rb') as img_f:
+            data = img_f.read()
+        image_f = ContentFile(data)
+
+        return image_f
+
+    def _cleanup_storage(self):
+        pass
+
+

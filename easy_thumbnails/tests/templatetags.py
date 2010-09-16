@@ -9,6 +9,7 @@ from StringIO import StringIO
 
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.core.files.storage import get_storage_class
 from django.template import Template, Context, TemplateSyntaxError
 
 from easy_thumbnails.tests.utils import (
@@ -26,10 +27,12 @@ ET_FIXTURES_DIR = os.path.join(
     'fixtures')
 TRANS_PNG = 'gmail_trans.png'
 OPAQUE_PNG = 'gmail.png'
+default_storage_cls = get_storage_class()
 
 class BlankThumbnailTest(BaseTest):
     RELATIVE_PIC_NAME = 'test.jpg'
     STORAGE_BACKEND = TemporaryStorage
+    THUMBNAIL_EXT = 'jpg'
     restore_settings = ['THUMBNAIL_DEBUG']
 
     def _create_test_image(self):
@@ -43,6 +46,10 @@ class BlankThumbnailTest(BaseTest):
 
     def _cleanup_storage(self):
         self.storage.delete_temporary_storage()
+
+    def _get_expected(self, opts_str):
+        context = (self.RELATIVE_PIC_NAME, opts_str, self.THUMBNAIL_EXT)
+        return '%s.%s.%s' % context
 
     def setUp(self):
         BaseTest.setUp(self)
@@ -81,7 +88,7 @@ class BlankThumbnailTest(BaseTest):
         image = Image.open(image_f)
         self.assertEqual(image.size, expected_size)
 
-    def testTagInvalid(self):
+    def testWrongArgs(self):
         # No args, or wrong number of args
         src = '{% thumbnail %}'
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
@@ -90,14 +97,17 @@ class BlankThumbnailTest(BaseTest):
         src = '{% thumbnail source 80x80 as variable crop %}'
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
 
+    def testInvalidOption(self):
         # Invalid option
         src = '{% thumbnail source 240x200 invalid %}'
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
 
+    def testInvalidCsvOption(self):
         # Old comma separated options format can only have an = for quality
         src = '{% thumbnail source 80x80 crop=1,quality=1 %}'
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
 
+    def testInvalidQuality(self):
         # Invalid quality
         src_invalid = '{% thumbnail source 240x200 quality=invalid_q %}'
         src_missing = '{% thumbnail source 240x200 quality=missing_q %}'
@@ -111,6 +121,7 @@ class BlankThumbnailTest(BaseTest):
         self.assertRaises(TemplateSyntaxError, self.render_template,
                           src_missing)
 
+    def testInvalidSource(self):
         # Invalid source
         src = '{% thumbnail invalid_source 80x80 %}'
         src_on_context = '{% thumbnail invalid_source 80x80 as thumb %}'
@@ -123,6 +134,7 @@ class BlankThumbnailTest(BaseTest):
         self.assertRaises(TemplateSyntaxError, self.render_template,
                           src_on_context)
 
+    def testNonexistentSource(self):
         # Non-existant source
         src = '{% thumbnail non_existant_source 80x80 %}'
         src_on_context = '{% thumbnail non_existant_source 80x80 as thumb %}'
@@ -133,6 +145,7 @@ class BlankThumbnailTest(BaseTest):
         settings.THUMBNAIL_DEBUG = True
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
 
+    def testInvalidSizes(self):
         # Invalid size as a tuple:
         src = '{% thumbnail source invalid_size %}'
         # ...with THUMBNAIL_DEBUG = False
@@ -150,6 +163,7 @@ class BlankThumbnailTest(BaseTest):
         settings.THUMBNAIL_DEBUG = True
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
 
+    def testNonexistentSize(self):
         # Non-existant size
         src = '{% thumbnail source non_existant_size %}'
         # ...with THUMBNAIL_DEBUG = False
@@ -159,7 +173,7 @@ class BlankThumbnailTest(BaseTest):
         settings.THUMBNAIL_DEBUG = True
         self.assertRaises(TemplateSyntaxError, self.render_template, src)
 
-    def testTag(self):
+    def testBasic(self):
         # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
         settings.THUMBNAIL_DEBUG = True
         thumbnail_subdir = utils.get_setting('SUBDIR')
@@ -167,7 +181,7 @@ class BlankThumbnailTest(BaseTest):
         # Basic
         output = self.render_template('src="'
             '{% thumbnail source 240x240 %}"')
-        expected = '%s.240x240_q85.jpg' % self.RELATIVE_PIC_NAME
+        expected = self._get_expected('240x240_q85')
         self.verify_thumbnail((240, 180), expected)
         if utils.is_storage_local(self.storage):
             expected_url = ''.join(
@@ -176,11 +190,16 @@ class BlankThumbnailTest(BaseTest):
         else:
             self.assertTrue(output.find(expected) != -1)
 
+    def testSizeFromContext(self):
+        # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
+        settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+
         # Size from context variable
         # as a tuple:
         output = self.render_template('src="'
             '{% thumbnail source size %}"')
-        expected = '%s.90x100_q85.jpg' % self.RELATIVE_PIC_NAME
+        expected = self._get_expected('90x100_q85')
         self.verify_thumbnail((90, 67), expected)
         if utils.is_storage_local(self.storage):
             expected_url = ''.join(
@@ -189,10 +208,15 @@ class BlankThumbnailTest(BaseTest):
         else:
             self.assertTrue(output.find(expected) != -1)
 
+    def testSizeFromContextStr(self):
+        # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
+        settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+
         # as a string:
         output = self.render_template('src="'
             '{% thumbnail source strsize %}"')
-        expected = '%s.80x90_q85.jpg' % self.RELATIVE_PIC_NAME
+        expected = self._get_expected('80x90_q85')
         self.verify_thumbnail((80, 60), expected)
         if utils.is_storage_local(self.storage):
             expected_url = ''.join(
@@ -201,16 +225,26 @@ class BlankThumbnailTest(BaseTest):
         else:
             self.assertTrue(output.find(expected) != -1)
 
+    def testToContext(self):
+        # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
+        settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+
         # On context
         output = self.render_template('height:'
             '{% thumbnail source 240x240 as thumb %}{{ thumb.height }}')
         self.assertEqual(output, 'height:180')
 
+    def testWithOptAndQual(self):
+        # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
+        settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+
         # With options and quality
         output = self.render_template('src="'
             '{% thumbnail source 240x240 sharpen crop quality=95 %}"')
         # Note that the opts are sorted to ensure a consistent filename.
-        expected = '%s.240x240_q95_crop_sharpen.jpg' % self.RELATIVE_PIC_NAME
+        expected = self._get_expected('240x240_q95_crop_sharpen')
         self.verify_thumbnail((240, 240), expected)
         if utils.is_storage_local(self.storage):
             expected_url = ''.join(
@@ -219,11 +253,17 @@ class BlankThumbnailTest(BaseTest):
         else:
             self.assertTrue(output.find(expected) != -1)
 
+    def testWithOptQualToContext(self):
+        # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
+        settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+
         # With option and quality on context (also using its unicode method to
         # display the url)
         output = self.render_template(
             '{% thumbnail source 240x240 sharpen crop quality=95 as thumb %}'
             'width:{{ thumb.width }}, url:{{ thumb.url }}')
+        expected = self._get_expected('240x240_q95_crop_sharpen')
         if utils.is_storage_local(self.storage):
             expected_url = ''.join(
                 (settings.MEDIA_URL, thumbnail_subdir, expected))
@@ -239,11 +279,9 @@ class BlankRemoteThumbnailTest(BlankThumbnailTest):
     restore_settings = ['THUMBNAIL_DEBUG']
 
 
-class BlankS3ThumbnailTest(BlankThumbnailTest):
-    from storages.backends.s3boto import S3BotoStorage
-
+class BlankDefaultfsThumbnailTest(BlankThumbnailTest):
     RELATIVE_PIC_NAME = 'test.jpg'
-    STORAGE_BACKEND = S3BotoStorage
+    STORAGE_BACKEND =default_storage_cls
     restore_settings = ['THUMBNAIL_DEBUG']
 
     def _cleanup_storage(self):
@@ -253,6 +291,7 @@ class BlankS3ThumbnailTest(BlankThumbnailTest):
 class TransparentPngThumbnailTest(BlankThumbnailTest):
     RELATIVE_PIC_NAME = 'test.png'
     STORAGE_BACKEND = TemporaryStorage
+    THUMBNAIL_EXT = 'png'
     restore_settings = ['THUMBNAIL_DEBUG']
 
     def _create_test_image(self):
@@ -268,6 +307,7 @@ class TransparentPngThumbnailTest(BlankThumbnailTest):
 class TransparentPngRemoteThumbnailTest(BlankThumbnailTest):
     RELATIVE_PIC_NAME = 'test.png'
     STORAGE_BACKEND = FakeRemoteStorage
+    THUMBNAIL_EXT = 'png'
     restore_settings = ['THUMBNAIL_DEBUG']
 
     def _create_test_image(self):
@@ -280,11 +320,10 @@ class TransparentPngRemoteThumbnailTest(BlankThumbnailTest):
         return image_f
 
 
-class TransparentPngS3ThumbnailTest(BlankThumbnailTest):
-    from storages.backends.s3boto import S3BotoStorage
-
+class TransparentDefaultfsThumbnailTest(BlankThumbnailTest):
     RELATIVE_PIC_NAME = 'test.png'
-    STORAGE_BACKEND = S3BotoStorage
+    STORAGE_BACKEND = default_storage_cls
+    THUMBNAIL_EXT = 'png'
     restore_settings = ['THUMBNAIL_DEBUG']
 
     def _create_test_image(self):
@@ -330,11 +369,9 @@ class OpaquePngRemoteThumbnailTest(BlankThumbnailTest):
         return image_f
 
 
-class OpaquePngS3ThumbnailTest(BlankThumbnailTest):
-    from storages.backends.s3boto import S3BotoStorage
-
+class OpaquePngDefaultfsThumbnailTest(BlankThumbnailTest):
     RELATIVE_PIC_NAME = 'test.png'
-    STORAGE_BACKEND = S3BotoStorage
+    STORAGE_BACKEND = default_storage_cls
     restore_settings = ['THUMBNAIL_DEBUG']
 
     def _create_test_image(self):

@@ -21,7 +21,7 @@ def process_image(source, processor_options, processors=None):
     """
     Process a source PIL image through a series of image processors, returning
     the (potentially) altered image.
-    
+
     """
     if processors is None:
         processors = DEFAULT_PROCESSORS
@@ -34,7 +34,7 @@ def process_image(source, processor_options, processors=None):
 def save_image(image, destination=None, filename=None, **options):
     """
     Save a PIL image.
-    
+
     """
     if destination is None:
         destination = StringIO()
@@ -48,6 +48,12 @@ def save_image(image, destination=None, filename=None, **options):
             # Try again, without optimization (PIL can't optimize an image
             # larger than ImageFile.MAXBLOCK, which is 64k by default)
             pass
+    elif format == 'PNG':
+        # PNGs don't mind an invalid quality number, but JPEGs do. Raise an error
+        # if the quality number isn't valid to be consistent.
+        if options.has_key('quality'):
+            options['quality'] = int(options['quality'])
+
     image.save(destination, format=format, **options)
     if hasattr(destination, 'seek'):
         destination.seek(0)

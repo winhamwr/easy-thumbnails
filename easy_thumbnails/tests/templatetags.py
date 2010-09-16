@@ -301,7 +301,7 @@ class BlankThumbnailTest(BaseTest):
         if utils.is_storage_local(self.storage):
             self.assertEqual(output, 'src="%s"' % expected_url)
         else:
-            self.assertTrue(output.find(expected) != -1)
+            self.assertTrue(output.find(expected) != -1, "Actual output:%s" % output)
 
         # Ensure that we didn't add another thumbnail to the cache
         self.assertEqual(Thumbnail.objects.all().count(), 1)

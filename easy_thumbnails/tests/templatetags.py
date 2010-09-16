@@ -18,6 +18,7 @@ from easy_thumbnails.tests.utils import (
     FakeRemoteStorage,
 )
 from easy_thumbnails.files import get_thumbnailer
+from easy_thumbnails.models import Thumbnail
 from easy_thumbnails import utils
 
 ET_FIXTURES_DIR = os.path.join(
@@ -272,6 +273,38 @@ class BlankThumbnailTest(BaseTest):
             self.assertTrue(output.find(expected) != -1)
             self.assertTrue(output.find('width:240') != -1)
 
+    def testBasicCached(self):
+        # Set THUMBNAIL_DEBUG = True to make it easier to trace any failures
+        settings.THUMBNAIL_DEBUG = True
+        thumbnail_subdir = utils.get_setting('SUBDIR')
+
+        self.assertEqual(Thumbnail.objects.all().count(), 0)
+        # Basic
+        output = self.render_template('src="'
+            '{% thumbnail source 240x240 %}"')
+        expected = self._get_expected('240x240_q85')
+        self.verify_thumbnail((240, 180), expected)
+        if utils.is_storage_local(self.storage):
+            expected_url = ''.join(
+                (settings.MEDIA_URL, thumbnail_subdir, expected))
+            self.assertEqual(output, 'src="%s"' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
+
+        # Added one thumbnail
+        self.assertEqual(Thumbnail.objects.all().count(), 1)
+
+        # Render the same thumbnail
+        output = self.render_template('src="'
+            '{% thumbnail source 240x240 %}"')
+        self.verify_thumbnail((240, 180), expected)
+        if utils.is_storage_local(self.storage):
+            self.assertEqual(output, 'src="%s"' % expected_url)
+        else:
+            self.assertTrue(output.find(expected) != -1)
+
+        # Ensure that we didn't add another thumbnail to the cache
+        self.assertEqual(Thumbnail.objects.all().count(), 1)
 
 class BlankRemoteThumbnailTest(BlankThumbnailTest):
     RELATIVE_PIC_NAME = 'test.jpg'
